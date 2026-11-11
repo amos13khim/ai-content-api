@@ -1,0 +1,119 @@
+name: ai-content-api
+
+x-runtime: &runtime
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+  image: ai-content-api:local
+  env_file: .env
+  init: true
+
+x-app-depends: &app-depends
+  mysql:
+    condition: service_healthy
+  redis:
+    condition: service_healthy
+
+services:
+  app:
+    <<: *runtime
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+    depends_on: *app-depends
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1:8080/up') === false ? 1 : 0);"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  worker:
+    <<: *runtime
+    command: ["php", "artisan", "queue:work", "redis", "--queue=generations", "--sleep=1", "--tries=1", "--timeout=60", "--max-time=3600"]
+    depends_on: *app-depends
+    stop_grace_period: 70s
+    restart: unless-stopped
+
+  scheduler:
+    <<: *runtime
+    command: ["php", "artisan", "schedule:work"]
+    depends_on: *app-depends
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE:-content_api}
+      MYSQL_USER: ${DB_USERNAME:-content}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-local-development-only}
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --user=\"$$MYSQL_USER\" --password=\"$$MYSQL_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  tests:
+    <<: *runtime
+    profiles: ["test"]
+    command: ["composer", "check"]
+    environment:
+      APP_ENV: testing
+      APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      DB_HOST: mysql-test
+      DB_DATABASE: content_api_test
+      DB_USERNAME: content
+      DB_PASSWORD: test-only
+      REDIS_HOST: redis-test
+      REDIS_DB: 14
+      REDIS_CACHE_DB: 15
+      CACHE_STORE: array
+      QUEUE_CONNECTION: sync
+      AI_DRIVER: fake
+      LOG_CHANNEL: "null"
+    depends_on:
+      mysql-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+
+  mysql-test:
+    image: mysql:8.4
+    profiles: ["test"]
+    environment:
+      MYSQL_DATABASE: content_api_test
+      MYSQL_USER: content
+      MYSQL_PASSWORD: test-only
+      MYSQL_ROOT_PASSWORD: test-root-only
+    tmpfs: /var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u content -ptest-only --silent"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  redis-test:
+    image: redis:7.4-alpine
+    profiles: ["test"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  mysql-data:
+  redis-data:

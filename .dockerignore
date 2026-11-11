@@ -1,0 +1,13 @@
+.git
+.env
+.env.*
+!.env.example
+vendor
+.cache
+.phpstan
+.phpunit.cache
+coverage
+build
+storage/logs/*
+!storage/logs/.gitignore
+bootstrap/cache/*.php

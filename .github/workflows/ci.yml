@@ -1,0 +1,23 @@
+name: CI
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure local test environment
+        run: cp .env.example .env
+      - name: Style, static analysis and MySQL/Redis tests
+        run: docker compose --profile test run --build --rm tests
+      - name: Report known Laravel 11 advisories
+        if: always()
+        continue-on-error: true
+        run: docker compose run --rm --no-deps app composer audit --locked
+      - name: Stop containers
+        if: always()
+        run: docker compose --profile test down --volumes
